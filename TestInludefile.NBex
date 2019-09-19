@@ -1,0 +1,22 @@
+//
+
+export ksyscall;
+export ksyscall1;
+
+method ksyscall(func){
+	res = 0;
+	asm{
+		mov	eax, @func
+		int	0x80
+		mov	@res, eax
+	}
+}
+
+method ksyscall1(func,param){
+	asm{
+		mov	eax, @func
+		mov	ebx, @param
+		int	0x80
+	}
+}
+

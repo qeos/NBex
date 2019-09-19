@@ -1,0 +1,20 @@
+// test
+
+method main(){
+}
+
+method init(){
+}
+
+method exit(){
+	asm{
+		mov	eax, 0
+		mov	ebx, 0
+		int 0x80
+	}
+}
+
+init();
+main();
+exit();
+

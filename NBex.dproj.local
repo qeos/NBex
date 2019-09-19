@@ -1,0 +1,13 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<BorlandProject>
+	<Transactions>
+    <Transaction>2010.11.04 23:06:29.059.dproj,C:\Users\Qeos\Documents\RAD Studio\Projects\Project1.dproj=D:\WORK\BUILD\OS\Compiler\Win32\NBex\NBex.dproj</Transaction>
+    <Transaction>2010.11.04 23:12:58.602.pas,D:\WORK\BUILD\OS\Compiler\Win32\NBex\Unit1.pas=D:\WORK\BUILD\OS\Compiler\Win32\NBex\Parser.pas</Transaction>
+    <Transaction>2010.11.04 23:19:39.715.pas,D:\WORK\BUILD\OS\Compiler\Win32\NBex\Unit1.pas=D:\WORK\BUILD\OS\Compiler\Win32\NBex\Debug.pas</Transaction>
+    <Transaction>2010.11.04 23:46:53.529.pas,D:\WORK\BUILD\OS\Compiler\Win32\NBex\Unit1.pas=D:\WORK\BUILD\OS\Compiler\Win32\NBex\Globals.pas</Transaction>
+    <Transaction>2010.11.04 23:51:03.470.pas,D:\WORK\BUILD\OS\Compiler\Win32\NBex\Globals.pas=</Transaction>
+    <Transaction>2010.11.07 19:47:51.590.pas,D:\WORK\BUILD\OS\Compiler\Win32\NBex\Unit1.pas=D:\WORK\BUILD\OS\Compiler\Win32\NBex\Compiler.pas</Transaction>
+    <Transaction>2010.11.07 19:49:39.515.pas,D:\WORK\BUILD\OS\Compiler\Win32\NBex\Compiler.pas=D:\WORK\BUILD\OS\Compiler\Win32\NBex\AsmCompiler.pas</Transaction>
+    <Transaction>2010.11.07 19:50:59.963.pas,D:\WORK\BUILD\OS\Compiler\Win32\NBex\AsmCompiler.pas=D:\WORK\BUILD\OS\Compiler\Win32\NBex\Compiler.pas</Transaction>
+  </Transactions>
+</BorlandProject>

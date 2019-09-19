@@ -1,0 +1,37 @@
+// Parse tree for NBex
+
+Block: (ltUnit) cmd: "" name: "MAIN_TestInludefile"
+Sub:
+	Block: (ltExport) cmd: "export" name: "ksyscall"
+	Block: (ltExport) cmd: "export" name: "ksyscall1"
+	Block: (ltDeclaration) cmd: "method" name: "ksyscall"
+	Params:
+		Block: (ltParam) cmd: "LOCAL" name: ""
+		Params:
+			Block: (ltExprGet) cmd: "func" name: ""
+	Sub:
+		Block: (ltExpr) cmd: "" name: "res"
+		Sub:
+			Block: (ltValue) cmd: "" name: "0"
+		Block: (ltInline) cmd: "asm" name: ""
+		Sub:
+			Block: (ltAsmCode) cmd: "		mov	eax, @func" name: ""
+			Block: (ltAsmCode) cmd: "		int	0x80" name: ""
+			Block: (ltAsmCode) cmd: "		mov	@res, eax" name: ""
+			Block: (ltAsmCode) cmd: "	" name: ""
+	Block: (ltDeclaration) cmd: "method" name: "ksyscall1"
+	Params:
+		Block: (ltParam) cmd: "LOCAL" name: ""
+		Params:
+			Block: (ltExprGet) cmd: "func" name: ""
+		Block: (ltParam) cmd: "LOCAL" name: ""
+		Params:
+			Block: (ltExprGet) cmd: "param" name: ""
+	Sub:
+		Block: (ltInline) cmd: "asm" name: ""
+		Sub:
+			Block: (ltAsmCode) cmd: "		mov	eax, @func" name: ""
+			Block: (ltAsmCode) cmd: "		mov	ebx, @param" name: ""
+			Block: (ltAsmCode) cmd: "		int	0x80" name: ""
+			Block: (ltAsmCode) cmd: "	" name: ""
+// End

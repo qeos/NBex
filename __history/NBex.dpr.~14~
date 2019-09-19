@@ -1,0 +1,22 @@
+program NBex;
+
+{$APPTYPE CONSOLE}
+
+uses
+  SysUtils,
+  Parser in 'Parser.pas',
+  Debug in 'Debug.pas',
+  Compiler in 'Compiler.pas';
+
+begin
+  try
+    InitDebug;
+    InitParser;
+    AddFileToParsing('TestFileParsing.nbex');
+    DoParse;
+    DoCompile;
+  except
+    on E: Exception do
+      Writeln(E.ClassName, ': ', E.Message);
+  end;
+end.

@@ -1,0 +1,38 @@
+unit Debug;
+
+interface
+uses IniFiles, SysUtils, Parser;
+
+const
+  // 0 - выводить все сообщения
+  // ...
+  // 5 - не выводить ничего
+  DebugLevel = 0;
+var
+  LangFile: TIniFile;
+
+procedure DebugMessage(msg: integer; level: integer);
+procedure DebugMessageSystem(msg: string; level: integer);
+
+implementation
+
+procedure DebugMessage(msg: integer; level: integer);
+begin
+  if LangFile = nil then
+    LangFile := TIniFile.Create(ExtractFileDir(ParamStr(0))+'\language.ini');
+  if level >= DebugLevel then begin
+
+    Write  ('['+FileList[CurrentFile].FileName+']['+IntToStr(CurrentLine)+','+IntToStr(CurrentPosition)+'] ');
+    Writeln(LangFile.ReadString('DebugStrings','Message'+IntToHex(msg, 4),'Message'+IntToHex(msg, 4)));
+  end;
+end;
+
+procedure DebugMessageSystem(msg: string; level: integer);
+begin
+  if level >= DebugLevel then begin
+    Write  ('['+FileList[CurrentFile].FileName+']['+IntToStr(CurrentLine)+','+IntToStr(CurrentPosition)+'] ');
+    Writeln(msg);
+  end;
+end;
+
+end.

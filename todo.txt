@@ -1,0 +1,16 @@
+- битовые операции and, or, xor...
+- defines
+- константы
+- массивы и массивные обекты
+- for структура
+- объектная модель
+- сравнения строк в if
+- else для if
+#- while структура
+#- include
+# if/then структуры
+#- result в методах
+#- strings variables
+#- нужно сделать в ассемблерной вставке чтобы можно было указывать переменную, т.е. распарсивать имена
+#- need implement local variables routine
+@- function calls compile with "push eax" code after call

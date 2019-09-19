@@ -1,0 +1,453 @@
+unit Compiler;
+
+interface
+uses Debug, SysUtils;
+
+const
+  ptrSize = 4;
+
+type
+  TVarType = (vtLong, vtString, vtStringConst);
+
+  PVariableRecord = ^VariableRecord;
+  VariableRecord = record
+    Name: string;
+    Offset: string;
+    VarType: TVarType;
+    Value: string;
+  end;
+
+  PBlockRecord = ^BlockRecord;
+  BlockRecord = record
+    Name: string;
+    LocalBlocks: integer;
+    LocalDecls: integer;
+    LocalVars: integer;
+    LocalConsts: integer;
+    VariableList: array of PVariableRecord;
+  end;
+
+var
+  BlockList: array of PBlockRecord;
+
+procedure DoCompile;
+
+implementation
+uses Parser;
+
+// @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+procedure WriteToFile(s: AnsiString);
+begin
+  FileList[CurrentFile].HandleAsm := FileCreate(ExtractFileName(FileList[CurrentFile].FileName));
+  if (FileList[CurrentFile].HandleAsm = -1) then begin
+    DebugMessage(14,5);
+    Exit;
+  end;
+  FileWrite(FileList[CurrentFile].HandleAsm, s[1], Length(s));
+  FileClose(FileList[CurrentFile].HandleAsm);
+end;
+
+// @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+function GetVariable(Block: PBlockRecord; Name: string; ThisIsParametr, NeedToCreate: boolean):PVariableRecord;
+var
+  i:integer;
+  VariableRec: PVariableRecord;
+begin
+  i := 0;
+  while (i < Length(Block.VariableList)) do begin
+    if (Block.VariableList[i].Name = Name) then begin
+      Result := Block.VariableList[i];
+      Exit;
+    end;
+    inc(i);
+  end;
+  if (NeedToCreate) then begin
+    // переменная еще не объявлена
+    new(VariableRec);
+    VariableRec.Name := Name;
+    VariableRec.VarType := vtLong;
+    if (ThisIsParametr) then begin
+      inc(Block.LocalDecls);
+      VariableRec.Offset := '+'+IntToStr(Block.LocalDecls*4);
+    end else begin
+      inc(Block.LocalVars);
+      VariableRec.Offset := '-'+IntToStr(Block.LocalVars*4);
+    end;
+
+    SetLength(Block.VariableList, i+1);
+    Block.VariableList[i] := VariableRec;
+    Result := VariableRec;
+  end else begin
+    Result := nil;
+  end;
+end;
+
+// @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+function NewBlock(Name: string):PBlockRecord;
+var
+  i:integer;
+  Block: PBlockRecord;
+begin
+  i := 0;
+  while (i < Length(BlockList)) do begin
+    if (BlockList[i].Name = Name) then begin
+      Result := BlockList[i];
+      Exit;
+    end;
+    inc(i);
+  end;
+  // переменная еще не объявлена
+  new(Block);
+  Block.Name := Name;
+  Block.VariableList := nil;
+  Block.LocalDecls := 1;
+  Block.LocalBlocks := 0;
+  Block.LocalVars := 0;
+  Block.LocalConsts := 0;
+
+  SetLength(BlockList, i+1);
+  BlockList[i] := Block;
+  Result := Block;
+end;
+
+// @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+function DoCompileTree(LexDesc: PLexDescriptor; Block: PBlockRecord):string;
+  procedure DeclaireParams(LexDesc: PLexDescriptor; Block: PBlockRecord);
+  begin
+    while (LexDesc <> nil) do begin
+      GetVariable(Block, LexDesc.Params.lCommand, true, true); // временно оставим так
+      LexDesc := LexDesc.Next;
+    end;
+  end;
+var
+  s, ss, sss: string;
+  i: integer;
+  Next: PLexDescriptor;
+  NBlock: PBlockRecord;
+  VariableRec: PVariableRecord;
+  isStringVar: boolean;
+begin
+  s := '';
+  Next := LexDesc;
+  isStringVar := false;
+  while (Next <> nil) do begin
+
+    // -------------------------------------------------------------------------
+    if ((Next.lType = ltMain) or (Next.lType = ltUnit)) then begin
+      s := s + 'use32' + #13#10 + #13#10;
+
+      ss := DoCompileTree(Next.Sub, Block);
+
+      if (DebugGetOptionString('TargertOS') = 'TMech') then begin
+        if (Next.lType = ltMain) then begin
+          // for debuging
+          s := s + 'include ''codemake.inc'''#13#10#13#10;
+          for I := 0 to Length(block.VariableList) - 1 do begin
+            if (block.VariableList[i].VarType = vtLong) then
+            else if (block.VariableList[i].VarType = vtString) then
+              s := s + 'idata ' + block.VariableList[i].Name + ','#9'dd 0'#13#10
+            else if (block.VariableList[i].VarType = vtStringConst) then
+              s := s + 'idata_s ' + block.VariableList[i].Name + ','''+block.VariableList[i].Value+''''#13#10
+          end;
+        end;
+      end else if (DebugGetOptionString('TargertOS') = 'Win32') then begin
+        s := s + 'format PE CONSOLE' + #13#10;
+        s := s + 'section ".code" code readable executable' + #13#10#13#10;
+      end;
+
+      s := s + Next.lName + ':' + #13#10;
+      if (Block.LocalVars > 0) then
+        s := s + #9'sub esp, ' + IntToStr(Block.LocalVars * ptrSize) + #13#10;
+      s := s + ss;
+
+      if (Next.lType = ltMain) then begin
+//        s := s + 'include "system.inc"' + #13#10#13#10;
+        if (DebugGetOptionString('TargertOS') = 'TMech') then begin
+          // for debuging
+          s := s + 'ddata'#13#10;
+        end else if (DebugGetOptionString('TargertOS') = 'Win32') then begin
+          s := s + 'section ".data" data readable writeable' + #13#10;
+          s := s + 'section ".idata" import data readable writeable' + #13#10;
+          s := s + 'section ".reloc" fixups data readable discardable' + #13#10;
+          s := s + #9'entry MAIN' + #13#10;
+        end;
+      end;
+    // -------------------------------------------------------------------------
+    end else if (Next.lType = ltDeclaration) then begin
+      if (Next.lCommand = 'method') then begin
+        s := s + '; local method' + #13#10;
+        NBlock := NewBlock('.' + Next.lName);
+        DeclaireParams(Next.Params, NBlock);
+        ss := DoCompileTree(Next.Sub, NBlock);
+        s := s + ';   params declared: '+IntToStr(NBlock.LocalDecls-1)+', local vars: '+IntToStr(NBlock.LocalVars) + #13#10;
+        s := s + Next.lName + ':' + #13#10;
+
+        for I := 0 to Length(NBlock.VariableList) - 1 do begin
+          if (NBlock.VariableList[i].VarType = vtLong) then
+//            s := s + 'TVar ' + block.VariableList[i].Name + ','#9'dd 0'#13#10
+          else if (NBlock.VariableList[i].VarType = vtString) then
+            s := s + 'idata ' + NBlock.VariableList[i].Name + ','#9'dd 0'#13#10
+          else if (NBlock.VariableList[i].VarType = vtStringConst) then
+            s := s + 'idata_s ' + NBlock.VariableList[i].Name + ','''+NBlock.VariableList[i].Value+''''#13#10
+        end;
+
+        s := s + #9'push ebp' + #13#10;
+        s := s + #9'mov ebp, esp' + #13#10;
+        // некоторое отступление
+        //  в начале процедуры выделяется фрейм под локальные переменные
+        //    sup ESP, x
+        //  обращение к локальной переменной идет в порядке уменьшения
+        //    mov [EBP-4], 1 ; обращение ко второй переменной
+        //  передача параметров в функцию
+        //    mov [ESP+4], 2 ; установка второго параметра
+        //  обращение к переданному параметру тогда будет так
+        //    mov eax, [EBP+4] ; второй параметр
+        //  возврат данных из функции происходит в регистре eax
+        //    mov eax, [EBP-4] ; в этом смещении содержится Result
+
+
+        // уменьшим стек на количество локальных переменных используемых в блоке
+        if (NBlock.LocalVars > 0) then
+          s := s + #9'sub esp, ' + IntToStr(NBlock.LocalVars * ptrSize) + #13#10;
+
+        s := s + ss;
+
+//        s := s + #9'mov eax, [ebp-'+IntToStr(ptrSize)+']' + #13#10;
+        s := s + '.return:' + #13#10;
+        s := s + #9'leave' + #13#10;
+        s := s + #9'ret' + #13#10 + #13#10;
+      end else if (Next.lCommand = 'if') then begin
+
+        inc(Block.LocalBlocks);
+        NBlock := NewBlock('.if' + IntToStr(Block.LocalBlocks));
+//        DeclaireParams(Next.Params, NBlock);
+        s := s + '; ' + NBlock.Name + #13#10;
+
+        ss := DoCompileTree(Next.Params, NBlock);
+
+        s := s + ss;
+
+        ss := DoCompileTree(Next.Sub, NBlock);
+
+        s := s + ss;
+
+        s := s + NBlock.Name + '_exit:' + #13#10;
+        s := s + '; end ' + NBlock.Name + #13#10;
+        DebugMessageSystem('need implement declaration "'+Next.lCommand+'"',5);
+      end else begin
+        DebugMessageSystem('need implement declaration "'+Next.lCommand+'"',5);
+      end;
+    // -------------------------------------------------------------------------
+    end else if (Next.lType = ltInclude) then begin
+      s := s + '; Include file: '+Next.lName + #13#10;
+      ss := Next.lName;
+      SetLength(ss, length(ss)-5);
+      s := s + 'iinclude "'+ ss + '.asm"' + #13#10;
+    // -------------------------------------------------------------------------
+    end else if (Next.lType = ltExport) then begin
+      s := s + '; Export method: '+Next.lName + #13#10;
+    // -------------------------------------------------------------------------
+    end else if (Next.lType = ltExpr) then begin
+//      DebugMessageSystem('need implement putting value',5);
+      s := s + DoCompileTree(Next.Sub, Block);
+      VariableRec := GetVariable(Block, Next.lName, false, true);
+      s := s + #9'pop dword [ebp'+VariableRec.Offset+'] ; ('+VariableRec.Name+')' + #13#10 + #13#10;
+//      s := s + #9'mov '+Next.lName + ', eax' + #13#10;
+    // -------------------------------------------------------------------------
+    end else if (Next.lType = ltExprGet) then begin
+      VariableRec := GetVariable(Block, Next.lCommand, false, true);
+      s := s + #9'push dword [ebp'+VariableRec.Offset+'] ; ('+VariableRec.Name+')' + #13#10;
+    // -------------------------------------------------------------------------
+    end else if (Next.lType = ltOperand) then begin
+      if (isStringVar) then begin
+        if (Next.lName = '+') then begin
+          s := s + #9'call str_join' + #13#10;
+          s := s + #9'push eax' + #13#10;
+//          DebugMessageSystem('need implement string manipulations',5);
+        end else begin
+          DebugMessageSystem('erronius string manipulations',5);
+        end;
+      end else begin
+        if (Next.lName = '+') then begin
+  //        s := s + ';ADD {' + #13#10;
+          s := s + #9'pop ebx' + #13#10;
+          s := s + #9'pop eax' + #13#10;
+          s := s + #9'add eax, ebx' + #13#10;
+          s := s + #9'push eax' + #13#10;
+  //        s := s + ';ADD }' + #13#10;
+        end else if (Next.lName = '-') then begin
+  //        s := s + ';SUB {' + #13#10;
+          s := s + #9'pop ebx' + #13#10;
+          s := s + #9'pop eax' + #13#10;
+          s := s + #9'sub eax, ebx' + #13#10;
+          s := s + #9'push eax' + #13#10;
+  //        s := s + ';SUB }' + #13#10;
+        end else if (Next.lName = '*') then begin
+  //        s := s + ';MUL {' + #13#10;
+          s := s + #9'pop ebx' + #13#10;
+          s := s + #9'pop eax' + #13#10;
+          s := s + #9'imul eax, ebx' + #13#10;
+          s := s + #9'push eax' + #13#10;
+  //        s := s + ';MUL }' + #13#10;
+        end else if (Next.lName = '/') then begin
+  //        s := s + ';DIV  {' + #13#10;
+          s := s + #9'pop ebx' + #13#10;
+          s := s + #9'pop eax' + #13#10;
+          s := s + #9'xor edx, edx' + #13#10;
+          s := s + #9'idiv ebx' + #13#10;
+          s := s + #9'push eax' + #13#10;
+  //        s := s + ';DIV  }' + #13#10;
+        end else begin
+          DebugMessageSystem('need implement operator "'+Next.Params.lName+'"',5);
+        end;
+      end;
+    // -------------------------------------------------------------------------
+    end else if (Next.lType = ltBitOperand) then begin
+      if (isStringVar) then begin
+        DebugMessageSystem('need implement bit operands for string',5);
+      end else begin
+        if (Next.lName = '==') then begin
+          s := s + #9'pop eax' + #13#10;
+          s := s + #9'pop ebx' + #13#10;
+          s := s + #9'cmp eax, ebx' + #13#10;
+          s := s + #9'jne '+ Block.Name + '_exit' + #13#10;
+        end else if (Next.lName = '!=') then begin
+          s := s + #9'pop eax' + #13#10;
+          s := s + #9'pop ebx' + #13#10;
+          s := s + #9'cmp eax, ebx' + #13#10;
+          s := s + #9'je '+ Block.Name + '_exit' + #13#10;
+        end else if (Next.lName = '>') then begin
+          s := s + #9'pop eax' + #13#10;
+          s := s + #9'pop ebx' + #13#10;
+          s := s + #9'cmp eax, ebx' + #13#10;
+          s := s + #9'jbe '+ Block.Name + '_exit' + #13#10;
+        end else if (Next.lName = '>=') then begin
+          s := s + #9'pop eax' + #13#10;
+          s := s + #9'pop ebx' + #13#10;
+          s := s + #9'cmp eax, ebx' + #13#10;
+          s := s + #9'jb '+ Block.Name + '_exit' + #13#10;
+        end else if (Next.lName = '<') then begin
+          s := s + #9'pop eax' + #13#10;
+          s := s + #9'pop ebx' + #13#10;
+          s := s + #9'cmp eax, ebx' + #13#10;
+          s := s + #9'jae '+ Block.Name + '_exit' + #13#10;
+        end else if (Next.lName = '<=') then begin
+          s := s + #9'pop eax' + #13#10;
+          s := s + #9'pop ebx' + #13#10;
+          s := s + #9'cmp eax, ebx' + #13#10;
+          s := s + #9'ja '+ Block.Name + '_exit' + #13#10;
+        end;
+      end;
+    // -------------------------------------------------------------------------
+    end else if (Next.lType = ltValue) then begin
+      s := s + #9'push dword '+Next.lName + #13#10;
+    // -------------------------------------------------------------------------
+    end else if (Next.lType = ltCall) then begin
+//      DebugMessageSystem('need implement call backwards',5);
+      s := s + DoCompileTree(Next.Params, Block);
+      s := s + #9'call ' + Next.lCommand + #13#10;
+      s := s + #9'push eax' + #13#10 + #13#10;
+    // -------------------------------------------------------------------------
+    end else if (Next.lType = ltParam) then begin
+//      DebugMessageSystem('need implement parametres for call',5);
+//      s := s + #9'; params {' + #13#10;
+      s := s + DoCompileTree(Next.Params, Block);
+//      s := s + #9'; }' + #13#10;
+    // -------------------------------------------------------------------------
+    end else if (Next.lType = ltInline) then begin
+      s := s + '; inline code {' + #13#10;
+      s := s + DoCompileTree(Next.Sub, Block);
+      s := s + '; }' + #13#10;
+    // -------------------------------------------------------------------------
+    end else if (Next.lType = ltAsmCode) then begin
+//      s := s + '; inline code {' + #13#10;
+      if (Pos('@', Next.lCommand) > 0) then begin
+        sss := '';
+        i := Pos('@', Next.lCommand)+1;
+        while ((i<=Length(Next.lCommand))
+            and (Next.lCommand[i] <> ',')
+            and (Next.lCommand[i] <> #9)
+            and (Next.lCommand[i] <> ' ')
+            ) do begin
+          sss := sss + Next.lCommand[i];
+          inc(i);
+        end;
+        VariableRec := GetVariable(Block, sss, true, false);
+        if (VariableRec = nil) then
+          DebugMessageSystem('Variable not exists "'+Next.lCommand+'"',5);
+        ss := StringReplace(Next.lCommand, '@'+sss, 'dword [ebp'+VariableRec.Offset+']',[rfReplaceAll, rfIgnoreCase]);
+        s := s + ss + ' ; ('+sss+')' + #13#10;
+      end else begin
+        s := s + Next.lCommand + #13#10;
+      end;
+//      s := s + '; }' + #13#10;
+    // -------------------------------------------------------------------------
+    end else if (Next.lType = ltString) then begin
+      VariableRec := GetVariable(Block, 'Strings_'+Block.Name+'_'+IntToStr(Block.LocalConsts), false, true);
+      VariableRec.VarType := vtStringConst;
+      VariableRec.Value := Next.lName;
+      inc(Block.LocalConsts);
+      s := s + #9'assign eax, '+VariableRec.Name + #13#10;
+      s := s + #9'push eax' + #13#10;
+      isStringVar := true;
+    // -------------------------------------------------------------------------
+    end else if (Next.lType = ltReturn) then begin
+//      DebugMessageSystem('need implement return value',5);
+      s := s + DoCompileTree(Next.Sub, Block);
+      VariableRec := GetVariable(Block, Next.lName, false, true);
+      s := s + #9'pop eax' + #13#10;
+      s := s + #9'jmp .return' + #13#10 + #13#10;
+    // -------------------------------------------------------------------------
+    end else begin
+      s := s + 'unknown('+GetNameByType(Next.lType)+')' + #13#10;
+      DebugMessageSystem('Need implementation for compile type: "'+GetNameByType(Next.lType)+'"',5);
+    end;
+
+    Next := Next.Next;
+  end;
+  Result := s;
+end;
+
+// @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+procedure DoCompile;
+var
+  s: string;
+  sf: string;
+  t: TDateTime;
+begin
+  t := now;
+  CurrentFile := 0;
+
+  while (CurrentFile < Length(FileList)) do begin
+
+    SetLength(BlockList, 0);
+
+    sf := FileList[CurrentFile].FileName;
+    FileList[CurrentFile].FileName := ExtractFileName(sf);
+    SetLength(FileList[CurrentFile].FileName, length(FileList[CurrentFile].FileName)-5);
+    FileList[CurrentFile].FileName := FileList[CurrentFile].FileName+'.asm';
+    CurrentLine := 0;
+    CurrentPosition := 1;
+    if (FileList[CurrentFile].ParseState = -1) then begin
+      DebugMessage(13,1);
+      exit;
+    end;
+    DebugMessage(15,5);
+    s := '';
+    // запишем заголовок файла
+    s := s + '; -------------------------------------------------------------' + #13#10;
+    s := s + '; This file compiled by NBex' + #13#10;
+    s := s + ';' + #13#10;
+    s := s + '; Compiled from file "'+sf+'"' + #13#10;
+    s := s + '; -------------------------------------------------------------' + #13#10;
+    s := s + #13#10;
+    s := s + DoCompileTree(FileList[CurrentFile].LexList, NewBlock('MMM'));
+    WriteToFile(s);
+
+    inc(CurrentFile);
+  end;
+
+  DebugMessageSystem('Compiling time: '+ShowTime(now-t),3);
+end;
+
+end.

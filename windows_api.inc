@@ -1,0 +1,3 @@
+CreateFileA:
+	ret
+	jmp CreateFileA

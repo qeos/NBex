@@ -1,0 +1,162 @@
+// Parse tree for NBex
+
+Block: (ltMain) cmd: "" name: "MAIN_TestFileParsing"
+Sub:
+	Block: (ltInclude) cmd: "" name: "TestInludefile.NBex"
+	Block: (ltExpr) cmd: "" name: "d"
+	Sub:
+		Block: (ltValue) cmd: "" name: "0x11ff30"
+		Block: (ltValue) cmd: "" name: "100"
+		Block: (ltOperand) cmd: "" name: "+"
+	Block: (ltExpr) cmd: "" name: "world"
+	Sub:
+		Block: (ltString) cmd: "" name: ""Dude", its world"
+	Block: (ltExpr) cmd: "" name: "strf"
+	Sub:
+		Block: (ltString) cmd: "" name: "Hello "
+		Block: (ltExprGet) cmd: "world" name: ""
+		Block: (ltOperand) cmd: "" name: "+"
+		Block: (ltString) cmd: "" name: "!!"
+		Block: (ltOperand) cmd: "" name: "+"
+	Block: (ltExpr) cmd: "" name: "a"
+	Sub:
+		Block: (ltValue) cmd: "" name: "2"
+	Block: (ltCall) cmd: "ksyscall1" name: ""
+	Params:
+		Block: (ltParam) cmd: "LOCAL" name: ""
+		Params:
+			Block: (ltExprGet) cmd: "strf" name: ""
+		Block: (ltParam) cmd: "LOCAL" name: ""
+		Params:
+			Block: (ltString) cmd: "" name: "outtext"
+	Block: (ltCall) cmd: "main" name: ""
+	Params:
+		Block: (ltParam) cmd: "LOCAL" name: ""
+		Params:
+			Block: (ltValue) cmd: "" name: "3"
+		Block: (ltParam) cmd: "LOCAL" name: ""
+		Params:
+			Block: (ltExprGet) cmd: "a" name: ""
+	Block: (ltCall) cmd: "ksyscall1" name: ""
+	Params:
+		Block: (ltParam) cmd: "LOCAL" name: ""
+		Params:
+			Block: (ltValue) cmd: "" name: "2"
+		Block: (ltParam) cmd: "LOCAL" name: ""
+		Params:
+			Block: (ltString) cmd: "" name: "exit"
+	Block: (ltInline) cmd: "asm" name: ""
+	Sub:
+		Block: (ltAsmCode) cmd: "include "windows_api.inc"" name: ""
+	Block: (ltDeclaration) cmd: "method" name: "main"
+	Params:
+		Block: (ltParam) cmd: "LOCAL" name: ""
+		Params:
+			Block: (ltExprGet) cmd: "parametrA" name: ""
+		Block: (ltParam) cmd: "LOCAL" name: ""
+		Params:
+			Block: (ltExprGet) cmd: "parametrB" name: ""
+	Sub:
+		Block: (ltExpr) cmd: "" name: "parametrN"
+		Sub:
+			Block: (ltValue) cmd: "" name: "111"
+			Block: (ltCall) cmd: "d" name: ""
+			Params:
+				Block: (ltParam) cmd: "LOCAL" name: ""
+				Params:
+					Block: (ltValue) cmd: "" name: "2"
+			Block: (ltValue) cmd: "" name: "222"
+			Block: (ltValue) cmd: "" name: "333"
+			Block: (ltValue) cmd: "" name: "444"
+			Block: (ltOperand) cmd: "" name: "/"
+			Block: (ltOperand) cmd: "" name: "+"
+			Block: (ltOperand) cmd: "" name: "*"
+			Block: (ltExprGet) cmd: "parametrA" name: ""
+			Block: (ltOperand) cmd: "" name: "+"
+		Block: (ltCall) cmd: "ksyscall1" name: ""
+		Params:
+			Block: (ltParam) cmd: "LOCAL" name: ""
+			Params:
+				Block: (ltString) cmd: "" name: "hello world"
+			Block: (ltParam) cmd: "LOCAL" name: ""
+			Params:
+				Block: (ltString) cmd: "" name: "outtext"
+		Block: (ltDeclaration) cmd: "if" name: ""
+		Params:
+			Block: (ltExprGet) cmd: "parametrA" name: ""
+			Block: (ltValue) cmd: "" name: "5"
+			Block: (ltOperand) cmd: "" name: "+"
+			Block: (ltExprGet) cmd: "parametrB" name: ""
+			Block: (ltBitOperand) cmd: "" name: ">="
+		Sub:
+			Block: (ltExpr) cmd: "" name: "parametrZ"
+			Sub:
+				Block: (ltCall) cmd: "ksyscall1" name: ""
+				Params:
+					Block: (ltParam) cmd: "LOCAL" name: ""
+					Params:
+						Block: (ltExprGet) cmd: "test" name: ""
+					Block: (ltParam) cmd: "LOCAL" name: ""
+					Params:
+						Block: (ltExprGet) cmd: "parametrA" name: ""
+		Block: (ltExpr) cmd: "" name: "ii"
+		Sub:
+			Block: (ltValue) cmd: "" name: "0"
+		Block: (ltDeclaration) cmd: "while" name: ""
+		Params:
+			Block: (ltExprGet) cmd: "ii" name: ""
+			Block: (ltValue) cmd: "" name: "1"
+			Block: (ltBitOperand) cmd: "" name: "<"
+		Sub:
+			Block: (ltExpr) cmd: "" name: "ii"
+			Sub:
+				Block: (ltExprGet) cmd: "ii" name: ""
+				Block: (ltValue) cmd: "" name: "1"
+				Block: (ltOperand) cmd: "" name: "+"
+		Block: (ltExpr) cmd: "" name: "ret"
+		Sub:
+			Block: (ltCall) cmd: "CreateFileA" name: ""
+			Params:
+				Block: (ltParam) cmd: "LOCAL" name: ""
+				Params:
+					Block: (ltExprGet) cmd: "lpFileName" name: ""
+				Block: (ltParam) cmd: "LOCAL" name: ""
+				Params:
+					Block: (ltExprGet) cmd: "dwDesiredAccess" name: ""
+				Block: (ltParam) cmd: "LOCAL" name: ""
+				Params:
+					Block: (ltExprGet) cmd: "dwShareMode" name: ""
+				Block: (ltParam) cmd: "LOCAL" name: ""
+				Params:
+					Block: (ltExprGet) cmd: "lpSecurityAttributes" name: ""
+				Block: (ltParam) cmd: "LOCAL" name: ""
+				Params:
+					Block: (ltExprGet) cmd: "dwCreationDistribution" name: ""
+				Block: (ltParam) cmd: "LOCAL" name: ""
+				Params:
+					Block: (ltExprGet) cmd: "dwFlagsAndAttributes" name: ""
+				Block: (ltParam) cmd: "LOCAL" name: ""
+				Params:
+					Block: (ltExprGet) cmd: "hTemplateFile" name: ""
+		Block: (ltReturn) cmd: "" name: "return"
+		Sub:
+			Block: (ltExprGet) cmd: "ret" name: ""
+			Block: (ltValue) cmd: "" name: "0"
+			Block: (ltOperand) cmd: "" name: "*"
+	Block: (ltDeclaration) cmd: "method" name: "d"
+	Params:
+		Block: (ltParam) cmd: "LOCAL" name: ""
+		Params:
+			Block: (ltExprGet) cmd: "ps" name: ""
+	Sub:
+		Block: (ltExpr) cmd: "" name: "p"
+		Sub:
+			Block: (ltExprGet) cmd: "ps" name: ""
+			Block: (ltExprGet) cmd: "ps" name: ""
+			Block: (ltOperand) cmd: "" name: "*"
+		Block: (ltInline) cmd: "asm" name: ""
+		Sub:
+			Block: (ltAsmCode) cmd: "		mov eax, @p" name: ""
+			Block: (ltAsmCode) cmd: "		mov	@ps, eax" name: ""
+			Block: (ltAsmCode) cmd: "	" name: ""
+// End

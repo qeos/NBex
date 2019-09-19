@@ -1,0 +1,51 @@
+//	Test file for NBex
+//
+//	язык может выгл€дить только в таких структурах
+//
+//		<объ€вление> <название> (<переменные>, ...) { <код> }
+//
+//		<вызов метода> ( <переменные>, ... ) ;
+//
+//		<переменна€> = <выражение> ;
+
+//need implementation
+include "TestInludefile.NBex";
+
+d = 0x11ff30+100;
+
+world = "\"Dude\", its world";
+strf = "Hello "+ world + "!!";
+
+method main(parametrA, parametrB){
+    parametrN = 111 * d(2) + (222 + 333 / 444) + parametrA;
+	ksyscall1("outtext", "hello world");
+	// this methos is member of object of this file
+	if (parametrA + 5 >= parametrB){
+		parametrZ = ksyscall1('test',parametrA);
+//		parametrA = parametrA + parametrB * parametrZ / 2;
+//		writeln (parametrA);
+	}
+	ii = 0;
+	while (ii<1){
+		ii = ii + 1;
+	}
+	//inline(parametrN);
+	ret = CreateFileA(lpFileName, dwDesiredAccess, dwShareMode, lpSecurityAttributes,
+			dwCreationDistribution, dwFlagsAndAttributes, hTemplateFile); 
+	return ret * 0;
+}
+
+method d(ps){
+    p = ps*ps;
+	asm{
+		mov eax, @p
+		mov	@ps, eax
+	}
+}
+
+a = 2;
+ksyscall1("outtext",strf);
+main(a,3);
+ksyscall1("exit",2);
+
+asm{include "windows_api.inc"}

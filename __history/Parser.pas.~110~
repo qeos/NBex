@@ -1,0 +1,1152 @@
+unit Parser;
+
+interface
+uses SysUtils;
+
+type
+  LexTypes = (ltMain, ltUnit, ltDeclaration, ltExport, ltParam, ltCall, ltExpr,
+      ltExprGet, ltOperand, ltBitOperand, ltInclude,
+      ltVariable, ltValue, ltInline, ltAsmCode, ltString, ltReturn);
+  LexResrvDescriptor = record
+    Name: string;
+  end;
+
+  PLexDescriptor = ^LexDescriptor;
+  LexDescriptor = record
+    lType: LexTypes;
+    lCommand: string;
+    lName: String;
+    Next: PLexDescriptor;
+    Params: PLexDescriptor;
+    Sub: PLexDescriptor;
+  end;
+
+  FileRecord = record
+    // им€ модул€
+    FileName: string;
+    // указатель на открытый файл
+    Handle: integer;
+    // тип компил€ции
+    ModuleType: LexTypes;
+    // им€ модул€
+    FileNameAsm: string;
+    // указатель на открытый файл
+    HandleAsm: integer;
+    // статус файла
+    //  0 - необработан
+    //  1 - идет обработка
+    //  2 - обработан
+    ParseState: integer;
+    // буффер данных
+    buffer: array of AnsiChar;
+    // указатель в файле
+    position: integer;
+    // список лексем в файле
+    LexList: PLexDescriptor;
+  end;
+
+var
+  // список файлов дл€ обработки
+  FileList: array of FileRecord;
+  // текущие обрабатываемые данные
+  CurrentFile:      Integer;
+  CurrentLine:      Integer;
+  CurrentPosition:  Integer;
+  // статус ошибок
+  //  0 - все в пор€дке
+  //  -1 - продолжение невозможно
+  //  100 - закончен парсинг
+  ErrorState: integer;
+  // зарезервированные инструкции
+  LexResrv: array of LexResrvDescriptor;
+
+procedure AddFileToParsing(FileName: string; AsType: LexTypes);
+procedure InitParser;
+procedure DoParse;
+function DoParseBlock: PLexDescriptor;
+function GetNameByType(lt: LexTypes): string;
+
+implementation
+uses Debug;
+
+//@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+procedure AddFileToParsing(FileName: string; AsType: LexTypes);
+var
+  i, size: integer;
+begin
+  // просмотрим имена файлов, может такой уже есть
+  i := 1;
+  size := Length(FileList);
+  while i <= size do begin
+    if FileList[i-1].FileName = FileName then begin
+      DebugMessage(1,0);
+      Exit;
+    end;
+    inc(i);
+  end;
+  // файл еще не добавлен - добавим
+  SetLength(FileList, size + 1);
+  FileList[size].FileName := FileName;
+  FileList[size].Handle := 0;
+  FileList[size].ModuleType := AsType;
+  FileList[size].ParseState := 0;
+end;
+
+//@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+function isSkipped(c: AnsiChar):boolean;
+begin
+  if (c = ' ')
+      or (c = #9) then
+    Result := true
+  else
+    Result := false;
+end;
+
+//@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+function isEnter(c: AnsiChar):boolean;
+begin
+  if (c = #10)
+      or (c = #13) then
+    Result := true
+  else
+    Result := false;
+end;
+
+//@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+function isAlpha(c: AnsiChar):boolean;
+begin
+  if ((c >= 'a') and (c <= 'z'))
+      or ((c >= 'A') and (c <= 'Z'))
+      or (c = '_') then
+    Result := true
+  else
+    Result := false;
+end;
+
+//@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+function isDigit(c: AnsiChar):boolean;
+begin
+  if ((c >= '0') and (c <= '9')) then
+    Result := true
+  else
+    Result := false;
+end;
+
+//@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+function isHexDigit(c: AnsiChar):boolean;
+begin
+  if (((c >= '0') and (c <= '9'))
+      or ((c >= 'a') and (c <= 'f'))
+      or ((c >= 'A') and (c <= 'F'))) then
+    Result := true
+  else
+    Result := false;
+end;
+
+//@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+function isReserved(s:string):boolean;
+var
+  i: integer;
+begin
+  i := 0;
+  Result := false;
+  while (i < Length(LexResrv)) do begin
+    if (LexResrv[i].Name = s) then begin
+      Result := true;
+      Break;
+    end;
+    inc(i);
+  end;
+end;
+
+//@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+procedure OpenCurrentFile;
+var
+  size, loaded: integer;
+begin
+  FileList[CurrentFile].Handle := FileOpen(FileList[CurrentFile].FileName, fmOpenRead);
+  if FileList[CurrentFile].Handle = -1 then begin
+    DebugMessage(2,5);
+    ErrorState := -1;
+  end else begin
+    DebugMessage(3,5);
+    // прочитаем файл в буффер
+    size := FileSeek(FileList[CurrentFile].Handle, 0, 2);
+    SetLength(FileList[CurrentFile].buffer, size);
+    FileSeek(FileList[CurrentFile].Handle, 0, 0);
+    loaded := FileRead(FileList[CurrentFile].Handle, FileList[CurrentFile].buffer[0], size);
+    if size <> loaded then begin
+      DebugMessage(4,5);
+      ErrorState := -1;
+    end else begin
+      FileList[CurrentFile].position := 0;
+    end;
+  end;
+end;
+
+//@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+function GetChar:AnsiChar;
+var
+  size: integer;
+  c: AnsiChar;
+begin
+  // если файл не открыт, то нужно его открыть
+  if FileList[CurrentFile].Handle = 0 then begin
+    OpenCurrentFile;
+  end;
+
+  // если нет ошибок, то вернем текущий символ
+  if ErrorState <> -1 then begin
+    if FileList[CurrentFile].position >= Length(FileList[CurrentFile].buffer) then begin
+      DebugMessage(5,0);
+      ErrorState := 50;
+    end else begin
+      size := FileList[CurrentFile].position;
+      c := FileList[CurrentFile].buffer[size];
+      inc(CurrentPosition);
+      inc(FileList[CurrentFile].position);
+      Result := c;
+    end;
+  end;
+end;
+
+//@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+procedure UngetChar;
+begin
+  dec(FileList[CurrentFile].position);
+  dec(CurrentPosition);
+end;
+
+//@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+function GetWord: string;
+var
+  s: string;
+  c: AnsiChar;
+begin
+  // если файл не открыт, то нужно его открыть
+  if FileList[CurrentFile].Handle = 0 then begin
+    OpenCurrentFile;
+  end;
+
+  s := '';
+  c := GetChar;
+  while ((isAlpha(c)) or (isDigit(c))) do begin
+    s := s + c;
+    c := GetChar;
+  end;
+  UngetChar;
+  Result := s;
+end;
+
+//@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+function OneOfString(c: AnsiChar; CharList: AnsiString):boolean;
+var
+  i: integer;
+begin
+  i := 1;
+  while ((i<=Length(CharList)) and (CharList[i] <> c)) do
+    inc(i);
+  Result := false;
+  if (CharList[i] = c) then
+    Result := true;
+end;
+
+//@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+function GetLine(StopChars:string): string;
+var
+  s: string;
+  c: AnsiChar;
+begin
+  // если файл не открыт, то нужно его открыть
+  if FileList[CurrentFile].Handle = 0 then begin
+    OpenCurrentFile;
+  end;
+
+  s := '';
+  c := GetChar;
+  while ((c <> #13) and (c <> #10) and (not OneOfString(c,StopChars))) do begin
+    s := s + c;
+    c := GetChar;
+  end;
+  while ((c = #13) or (c = #10)) do begin
+    c := GetChar;
+  end;
+  UngetChar;
+  Result := s;
+end;
+
+//@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+procedure SkipSkipped;
+var
+  c: AnsiChar;
+begin
+  repeat
+    c := GetChar;
+    if (ErrorState >= 50) then
+      break;
+  until (not isSkipped(c));
+  UngetChar;
+end;
+
+//@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+procedure DoComment;
+var
+  c: AnsiChar;
+begin
+  repeat
+    c := GetChar;
+  until (isEnter(c) or (ErrorState >= 50));
+end;
+
+//@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+function GetParams: PLexDescriptor;
+var
+  c: AnsiChar;
+  s: string;
+  LexDesc, LexDescNext: PLexDescriptor;
+begin
+  Result := nil;
+  LexDesc := nil;
+  repeat
+    SkipSkipped;
+    s := GetWord;
+
+    new(LexDescNext);
+    LexDescNext.lType := ltParam;
+    LexDescNext.lCommand := 'LOCAL';
+    LexDescNext.lName := s;
+    LexDescNext.Next := nil;
+    LexDescNext.Params := nil;
+    LexDescNext.Sub := nil;
+    if (LexDesc = nil) then begin
+      LexDesc := LexDescNext;
+      Result := LexDesc;
+    end else begin
+      LexDesc.Next := LexDescNext;
+      LexDesc := LexDescNext;
+    end;
+
+    SkipSkipped;
+    c := GetChar;
+  until (c = ')');
+end;
+
+//@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+function GetDigit: string;
+var
+  c: AnsiChar;
+  s: string;
+  thisHex: boolean;
+begin
+  s := '';
+  thisHex := false;
+  repeat
+    SkipSkipped;
+    c := GetChar;
+    if (isHexDigit(c)) then begin
+      s := s + c;
+    end else begin
+      if ((s = '0') and (c = 'x')) then begin
+        s := s + c;
+        thisHex := true;
+      end;
+    end;
+  until (not isHexDigit(c) and (c <> 'x'));
+  Result := s;
+  UngetChar;
+end;
+
+//@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+function GetString: string;
+var
+  c: AnsiChar;
+  s: string;
+begin
+  s := '';
+  repeat
+    c := GetChar;
+    if (c = '\') then begin
+      c := GetChar;
+      s := s + c;
+      c := '\';
+    end else if (c <> '"') then begin
+      s := s + c;
+    end;
+  until (c = '"');
+  Result := s;
+//  UngetChar;
+end;
+
+//@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+// переработаем функциб по ѕќЋ»«у
+// http://ru.wikipedia.org/wiki/ќбратна€_польска€_запись
+function GetExpression(StopChar: AnsiString): PLexDescriptor;
+  function LowPriority(prev, curr: AnsiChar):boolean;
+    function GetPrior(c:AnsiChar):integer;
+    var
+      s:AnsiString;
+      i:integer;
+      p: string;
+    begin
+      s := '+-*/(';
+      p := '11220';
+      i:=1;
+      while (i<=Length(s)) do begin
+        if (s[i] = c) then begin
+          Result := StrToInt(p[i]);
+          Exit;
+        end;
+        inc(i);
+      end;
+      DebugMessageSystem('Unknown operator priority.',1);
+    end;
+  var
+    p,c: integer;
+  begin
+    p := GetPrior(prev);
+    c := GetPrior(curr);
+    if (p <= c) then
+      Result := true
+    else
+      Result := false;
+  end;
+var
+  c: AnsiChar;
+  s: string;
+  LexDesc, LexDescNext, LexDescStack: PLexDescriptor;
+  LexDescParams, LexDescParamsPrev: PLexDescriptor;
+begin
+  Result := nil;
+  LexDesc := nil;
+  LexDescStack := nil; // next == previous
+  repeat
+    SkipSkipped;
+    c := GetChar;
+
+    // -------------------------------------------------------------------------
+    if (isAlpha(c)) then begin
+      UngetChar;
+      s := GetWord;
+
+      SkipSkipped;
+      c := GetChar;
+      if (c = '(') then begin
+        new(LexDescNext);
+        LexDescNext.lType := ltCall;
+        LexDescNext.lCommand := s;
+        LexDescNext.lName := '';
+        LexDescNext.Next := nil;
+        LexDescNext.Params := nil;
+        LexDescNext.Sub := nil;
+
+      while (OneOfString(c,'(,')) do begin
+        SkipSkipped;
+        c := GetChar;
+        UngetChar;
+        if (c <> ')') then begin
+
+          new(LexDescParams);
+          LexDescParams.lType := ltParam;
+          LexDescParams.lCommand := 'LOCAL';
+          LexDescParams.lName := '';
+          LexDescParams.Next := nil;
+          LexDescParams.Params := nil;
+          LexDescParams.Sub := nil;
+          LexDescParams.Params := GetExpression('),');
+          if (LexDescNext.Params = nil) then begin
+            LexDescParamsPrev := LexDescParams;
+            LexDescNext.Params := LexDescParams;
+          end else begin
+            LexDescParamsPrev.Next := LexDescParams;
+            LexDescParamsPrev := LexDescParams;
+          end;
+        end;
+
+        SkipSkipped;
+        c := GetChar;
+      end;
+
+        if (LexDesc = nil) then begin
+          LexDesc := LexDescNext;
+          Result := LexDesc;
+        end else begin
+          LexDesc.Next := LexDescNext;
+          LexDesc := LexDescNext;
+        end;
+
+        SkipSkipped;
+        c := GetChar;
+//        DebugMessageSystem('Need to implement parametres for function call in GetExpression()',2);
+      end else begin
+        new(LexDescNext);
+        LexDescNext.lType := ltExprGet;
+        LexDescNext.lCommand := s;
+        LexDescNext.lName := '';
+        LexDescNext.Next := nil;
+        LexDescNext.Params := nil;
+        LexDescNext.Sub := nil;
+        if (LexDesc = nil) then begin
+          LexDesc := LexDescNext;
+          Result := LexDesc;
+        end else begin
+          LexDesc.Next := LexDescNext;
+          LexDesc := LexDescNext;
+        end;
+
+        if (not OneOfString(c,StopChar)) then
+          UngetChar;
+
+//        DebugMessageSystem('Need to implement words in GetExpression()',2);
+      end;
+    // -------------------------------------------------------------------------
+    end else if (c = '"') then begin
+      new(LexDescNext);
+      LexDescNext.lType := ltString;
+      LexDescNext.lCommand := '';
+      LexDescNext.lName := GetString;
+      LexDescNext.Next := nil;
+      LexDescNext.Params := nil;
+      LexDescNext.Sub := nil;
+      if (LexDesc = nil) then begin
+        LexDesc := LexDescNext;
+        Result := LexDesc;
+      end else begin
+        LexDesc.Next := LexDescNext;
+        LexDesc := LexDescNext;
+      end;
+//      DebugMessageSystem('Need to implement strings expressions',2);
+    // -------------------------------------------------------------------------
+    end else if (isDigit(c)) then begin
+      UngetChar;
+      new(LexDescNext);
+      LexDescNext.lType := ltValue;
+      LexDescNext.lCommand := '';
+      LexDescNext.lName := GetDigit;
+      LexDescNext.Next := nil;
+      LexDescNext.Params := nil;
+      LexDescNext.Sub := nil;
+      if (LexDesc = nil) then begin
+        LexDesc := LexDescNext;
+        Result := LexDesc;
+      end else begin
+        LexDesc.Next := LexDescNext;
+        LexDesc := LexDescNext;
+      end;
+    // -------------------------------------------------------------------------
+    end else if (OneOfString(c,'+-*/()')) then begin
+      if (c <> '(') then begin
+        if (c = ')') then begin
+          // pop
+          while ((LexDescStack <> nil) and (LexDescStack.lName <> '(')) do begin
+            LexDesc.Next := LexDescStack;
+            LexDescStack := LexDescStack.Next;
+            LexDesc := LexDesc.Next;
+            LexDesc.Next := nil;
+          end;
+          if (LexDescStack <> nil) then
+            LexDescStack := LexDescStack.Next;
+          Continue;
+        end else begin
+          // pop
+          while ((LexDescStack <> nil) and (LowPriority(c,AnsiChar(LexDescStack.lName[1])))) do begin
+            LexDesc.Next := LexDescStack;
+            LexDescStack := LexDescStack.Next;
+            LexDesc := LexDesc.Next;
+            LexDesc.Next := nil;
+          end;
+        end;
+      end;
+      // push
+      new(LexDescNext);
+      LexDescNext.lType := ltOperand;
+      LexDescNext.lCommand := '';
+      LexDescNext.lName := c;
+      LexDescNext.Next := nil;
+      LexDescNext.Params := nil;
+      LexDescNext.Sub := nil;
+      if (LexDescStack = nil) then begin
+        LexDescStack := LexDescNext;
+      end else begin
+        LexDescNext.Next := LexDescStack;
+        LexDescStack := LexDescNext;
+      end;
+    // -------------------------------------------------------------------------
+    end else if (OneOfString(c,'=<>!')) then begin
+
+      while (LexDescStack <> nil) do begin
+        LexDesc.Next := LexDescStack;
+        LexDescStack := LexDescStack.Next;
+        LexDesc := LexDesc.Next;
+        LexDesc.Next := nil;
+      end;
+
+      new(LexDescNext);
+      LexDescNext.lType := ltBitOperand;
+      LexDescNext.lCommand := '';
+      LexDescNext.lName := c;
+      LexDescNext.Next := nil;
+      LexDescNext.Params := nil;
+      LexDescNext.Sub := nil;
+
+      c := GetChar;
+      if (OneOfString(c,'=')) then begin
+        LexDescNext.lName := LexDescNext.lName + c;
+      end;
+
+      if (LexDescStack = nil) then begin
+        LexDescStack := LexDescNext;
+      end else begin
+        LexDescNext.Next := LexDescStack;
+        LexDescStack := LexDescNext;
+      end;
+    end;
+
+    if (OneOfString(c,StopChar)) then begin
+      while (LexDescStack <> nil) do begin
+        LexDesc.Next := LexDescStack;
+        LexDescStack := LexDescStack.Next;
+        LexDesc := LexDesc.Next;
+        LexDesc.Next := nil;
+      end;
+    end;
+
+  until ((OneOfString(c,StopChar)) or (ErrorState = -1));
+  UngetChar;
+end;
+
+//@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+function GetAsmBlock(StartChar, EndChar: AnsiChar):PLexDescriptor;
+var
+  s: string;
+  c: AnsiChar;
+  cur, prev: PLexDescriptor;
+begin
+  c := ' ';
+  prev := nil;
+  while (not OneOfString(c, EndChar)) do begin
+    s := GetLine(EndChar);
+    if (s <> '') then begin
+      new(cur);
+      cur.lType := ltAsmCode;
+      cur.lCommand := s;
+      cur.lName := '';
+      cur.Next := nil;
+      cur.Params := nil;
+      cur.Sub := nil;
+
+      if (prev = nil) then begin
+        prev := cur;
+        Result := cur;
+      end else begin
+        prev.Next := cur;
+        prev := cur;
+      end;
+    end;
+    c := GetChar;
+    UngetChar;
+  end;
+  c := GetChar;
+end;
+
+//@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+function DoStatement: PLexDescriptor;
+var
+  s, name: string;
+  c: AnsiChar;
+  LexDesc, LexDescParams, LexDescParamsPrev: PLexDescriptor;
+begin
+  UngetChar;
+  s := GetWord;
+  if (isReserved(s)) then begin
+    // -------------------------------------------------------------------------
+    if (s = 'method') then begin
+      SkipSkipped;
+      name := GetWord;
+      SkipSkipped;
+      c := GetChar;
+      new(LexDesc);
+      LexDesc.lType := ltDeclaration;
+      LexDesc.lCommand := s;
+      LexDesc.lName := name;
+      LexDesc.Next := nil;
+      LexDesc.Params := nil;
+      LexDesc.Sub := nil;
+      if (c = '(') then begin
+//        LexDesc.Params := GetParams;
+      while (OneOfString(c,'(,')) do begin
+        SkipSkipped;
+        c := GetChar;
+        UngetChar;
+        if (c <> ')') then begin
+          new(LexDescParams);
+          LexDescParams.lType := ltParam;
+          LexDescParams.lCommand := 'LOCAL';
+          LexDescParams.lName := '';
+          LexDescParams.Next := nil;
+          LexDescParams.Params := nil;
+          LexDescParams.Sub := nil;
+          LexDescParams.Params := GetExpression('),');
+          if (LexDesc.Params = nil) then begin
+            LexDescParamsPrev := LexDescParams;
+            LexDesc.Params := LexDescParams;
+          end else begin
+            LexDescParamsPrev.Next := LexDescParams;
+            LexDescParamsPrev := LexDescParams;
+          end;
+        end;
+        SkipSkipped;
+        c := GetChar;
+      end;
+        SkipSkipped;
+        c := GetChar;
+      end;
+      if (c = '{') then begin
+        DebugMessage(8,1);
+        DebugMessageSystem('Structure "'+s+'" named as "'+name+'"',0);
+        LexDesc.Sub := DoParseBlock;
+      end else begin
+        DebugMessage(11,1);
+      end;
+      Result := LexDesc;
+    // -------------------------------------------------------------------------
+    end else if (s = 'export') then begin
+      SkipSkipped;
+      name := GetWord;
+      new(LexDesc);
+      LexDesc.lType := ltExport;
+      LexDesc.lCommand := s;
+      LexDesc.lName := name;
+      LexDesc.Next := nil;
+      LexDesc.Params := nil;
+      LexDesc.Sub := nil;
+      SkipSkipped;
+      c := GetChar;
+      if (c = ';') then begin
+        DebugMessage($11,1);
+        DebugMessageSystem('Export',0);
+      end else begin
+        DebugMessage($0a,1);
+      end;
+      Result := LexDesc;
+    // -------------------------------------------------------------------------
+    end else if (s = 'asm') then begin
+      SkipSkipped;
+      c := GetChar;
+      new(LexDesc);
+      LexDesc.lType := ltInline;
+      LexDesc.lCommand := s;
+      LexDesc.lName := '';
+      LexDesc.Next := nil;
+      LexDesc.Params := nil;
+      LexDesc.Sub := nil;
+      if (c = '{') then begin
+        DebugMessage(8,1);
+        DebugMessageSystem('Structure asm',0);
+        LexDesc.Sub := GetAsmBlock('{','}');
+      end else begin
+        DebugMessage(11,1);
+      end;
+      Result := LexDesc;
+    // -------------------------------------------------------------------------
+    end else if (s = 'if') then begin
+      SkipSkipped;
+      c := GetChar;
+      new(LexDesc);
+      LexDesc.lType := ltDeclaration;
+      LexDesc.lCommand := s;
+      LexDesc.lName := '';
+      LexDesc.Next := nil;
+      LexDesc.Params := nil;
+      LexDesc.Sub := nil;
+      if (c = '(') then begin
+        LexDesc.Params := GetExpression(')');
+        // это закрывающий символ
+        SkipSkipped;
+        c := GetChar;
+        SkipSkipped;
+        c := GetChar;
+      end;
+      if (c = '{') then begin
+        DebugMessage(8,1);
+        DebugMessageSystem('Structure "'+s+'"',0);
+        LexDesc.Sub := DoParseBlock;
+      end else begin
+        DebugMessage(11,1);
+      end;
+      Result := LexDesc;
+    // -------------------------------------------------------------------------
+    end else if (s = 'while') then begin
+      SkipSkipped;
+      c := GetChar;
+      new(LexDesc);
+      LexDesc.lType := ltDeclaration;
+      LexDesc.lCommand := s;
+      LexDesc.lName := '';
+      LexDesc.Next := nil;
+      LexDesc.Params := nil;
+      LexDesc.Sub := nil;
+      if (c = '(') then begin
+        LexDesc.Params := GetExpression(')');
+        // это закрывающий символ
+        SkipSkipped;
+        c := GetChar;
+        SkipSkipped;
+        c := GetChar;
+      end;
+      if (c = '{') then begin
+        DebugMessage(8,1);
+        DebugMessageSystem('Structure "'+s+'"',0);
+        LexDesc.Sub := DoParseBlock;
+      end else begin
+        DebugMessage(11,1);
+      end;
+      Result := LexDesc;
+    // -------------------------------------------------------------------------
+    end else if (s = 'return') then begin
+      new(LexDesc);
+      LexDesc.lType := ltReturn;
+      LexDesc.lCommand := '';
+      LexDesc.lName := s;
+      LexDesc.Next := nil;
+      LexDesc.Params := nil;
+      LexDesc.Sub := nil;
+      LexDesc.Sub := GetExpression(';,');
+      SkipSkipped;
+      c := GetChar;
+      if (c = ';') then begin
+        DebugMessage(12,1);
+        DebugMessageSystem('Expression for "'+s+'"',0);
+      end else begin
+        DebugMessage(10,5);
+        ErrorState := -1;
+      end;
+      Result := LexDesc;
+    // -------------------------------------------------------------------------
+    end else if (s = 'include') then begin
+      SkipSkipped;
+      c := GetChar;
+      if (c <> '"') then begin
+        DebugMessage($06,1);
+        ErrorState := 51;
+      end else begin
+        s := GetString;
+        AddFileToParsing(s, ltUnit);
+
+        new(LexDesc);
+        LexDesc.lType := ltInclude;
+        LexDesc.lCommand := '';
+        LexDesc.lName := s;
+        LexDesc.Next := nil;
+        LexDesc.Params := nil;
+        LexDesc.Sub := nil;
+
+        c := GetChar;
+        if (c <> ';') then begin
+          DebugMessage($0a,1);
+        end;
+        Result := LexDesc;
+      end;
+    // -------------------------------------------------------------------------
+    end else begin
+      DebugMessageSystem('Unparsed reserved word "'+s+'"',0);
+    end;
+  end else begin
+    SkipSkipped;
+    c := GetChar;
+    // -------------------------------------------------------------------------
+    if (c = '(') then begin
+      new(LexDesc);
+      LexDesc.lType := ltCall;
+      LexDesc.lCommand := s;
+      LexDesc.lName := name;
+      LexDesc.Next := nil;
+      LexDesc.Params := nil;
+      LexDesc.Sub := nil;
+
+      while (OneOfString(c,'(,')) do begin
+        SkipSkipped;
+        c := GetChar;
+        UngetChar;
+        if (c <> ')') then begin
+          new(LexDescParams);
+          LexDescParams.lType := ltParam;
+          LexDescParams.lCommand := 'LOCAL';
+          LexDescParams.lName := '';
+          LexDescParams.Next := nil;
+          LexDescParams.Params := nil;
+          LexDescParams.Sub := nil;
+          LexDescParams.Params := GetExpression('),');
+          if (LexDesc.Params = nil) then begin
+            LexDescParamsPrev := LexDescParams;
+            LexDesc.Params := LexDescParams;
+          end else begin
+//            LexDescParamsPrev.Next := LexDescParams;
+//            LexDescParamsPrev := LexDescParams;
+            LexDescParams.Next := LexDesc.Params;
+            LexDesc.Params := LexDescParams;
+          end;
+        end;
+        SkipSkipped;
+        c := GetChar;
+      end;
+      SkipSkipped;
+      c := GetChar;
+      if (c = ';') then begin
+        DebugMessage(12,1);
+        DebugMessageSystem('Call to "'+s+'"',0);
+      end else begin
+        DebugMessage(10,5);
+        ErrorState := -1;
+      end;
+      Result := LexDesc;
+    // -------------------------------------------------------------------------
+    end else if (c = '=') then begin
+      new(LexDesc);
+      LexDesc.lType := ltExpr;
+      LexDesc.lCommand := '';
+      LexDesc.lName := s;
+      LexDesc.Next := nil;
+      LexDesc.Params := nil;
+      LexDesc.Sub := nil;
+      LexDesc.Sub := GetExpression(';,');
+      SkipSkipped;
+      c := GetChar;
+      if (c = ';') then begin
+        DebugMessage(12,1);
+        DebugMessageSystem('Expression for "'+s+'"',0);
+      end else begin
+        DebugMessage(10,5);
+        ErrorState := -1;
+      end;
+      Result := LexDesc;
+    // -------------------------------------------------------------------------
+    end else begin
+      DebugMessage(7, 5);
+      ErrorState := -1;
+    end;
+  end;
+end;
+
+//@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+function DoParseBlock: PLexDescriptor;
+var
+  c,cc: AnsiChar;
+  LexDesc, LexDescNext: PLexDescriptor;
+begin
+  LexDesc := nil;
+  repeat
+    SkipSkipped;
+    c := GetChar;
+    // -------------------------------------------------------------------------
+    if (isEnter(c)) then begin
+      inc(CurrentLine);
+      CurrentPosition := 1;
+      // если следующий символ такой же, то это однобайтовый перевод строки
+      cc := GetChar;
+      if (cc = c) then begin
+        inc(CurrentLine);
+        CurrentPosition := 1;
+      // если следующий символ не перевод строки, то вернем его чтоб обработать
+      end else if (not isEnter(cc)) then begin
+        UngetChar;
+      end else begin
+        CurrentPosition := 1;
+      end;
+//      writeln('');
+    // -------------------------------------------------------------------------
+    end else if (c = '/') then begin
+      DoComment;
+    // -------------------------------------------------------------------------
+    end else if (isAlpha(c)) then begin
+      if (LexDesc = nil) then begin
+        LexDescNext := DoStatement;
+        LexDesc := LexDescNext;
+      end else begin
+        LexDescNext.Next := DoStatement;
+        LexDescNext := LexDescNext.Next;
+      end;
+    // -------------------------------------------------------------------------
+    end else if (c = '}') then begin
+      DebugMessage(9,1);
+      ErrorState := 50;
+    // -------------------------------------------------------------------------
+    end else begin
+      UngetChar;
+      DebugMessage(6, 5);
+      ErrorState := -1;
+    end;
+
+  until ((ErrorState = -1) or (ErrorState >= 50));
+  if (ErrorState = 50) then
+    ErrorState := 0;
+  Result := LexDesc;
+end;
+
+//@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+function GetNameByType(lt: LexTypes): string;
+begin
+  case lt of
+    ltMain: Result        := 'ltMain';
+    ltUnit: Result        := 'ltUnit';
+    ltDeclaration: Result := 'ltDeclaration';
+    ltExport: Result      := 'ltExport';
+    ltParam: Result       := 'ltParam';
+    ltCall: Result        := 'ltCall';
+    ltExpr: Result        := 'ltExpr';
+    ltExprGet: Result     := 'ltExprGet';
+    ltOperand: Result     := 'ltOperand';
+    ltBitOperand: Result  := 'ltBitOperand';
+    ltVariable: Result    := 'ltVariable';
+    ltValue: Result       := 'ltValue';
+    ltInline: Result      := 'ltInline';
+    ltAsmCode: Result     := 'ltAsmCode';
+    ltString: Result      := 'ltString';
+    ltReturn: Result      := 'ltReturn';
+    ltInclude: Result     := 'ltInclude';
+  else
+    Result := 'ltUnknown';
+  end;
+end;
+
+//@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+function LexRecord2String(LexDesc: PLexDescriptor; TabLevel: string):string;
+var
+  s, ss: string;
+begin
+  s := '';
+  if LexDesc <> nil then begin
+    s := TabLevel + 'Block: '
+        + '(' + GetNameByType(LexDesc.lType) + ')'
+        + ' cmd: "' + LexDesc.lCommand + '"'
+        + ' name: "' + LexDesc.lName + '"';
+    ss := LexRecord2String(LexDesc.Params, TabLevel + #9);
+    if (ss <> '') then
+      s := s + #13#10 + TabLevel + 'Params:' + #13#10 + ss;
+    ss := LexRecord2String(LexDesc.Sub, TabLevel + #9);
+    if (ss <> '') then
+      s := s + #13#10 + TabLevel + 'Sub:' + #13#10 + ss;
+    ss := LexRecord2String(LexDesc.Next, TabLevel);
+    if (ss <> '') then
+      s := s + #13#10 + ss;
+  end;
+  Result := s;
+end;
+
+//@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+procedure SaveParseTree;
+var
+  s:AnsiString;
+  i: integer;
+begin
+  s := '// Parse tree for NBex'+#13#10+#13#10;
+
+  s := s + LexRecord2String(FileList[CurrentFile].LexList,'');
+
+  s := s +#13#10+ '// End'+#13#10;
+
+  i := FileCreate(FileList[CurrentFile].FileName+'.parsetree');
+  if (i <> -1) then begin
+    FileWrite(i, s[1], Length(s));
+    FileClose(i);
+  end;
+end;
+
+//@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+procedure MoveDeclarationsToEndOfCode;
+var
+  cur, prev, decls, startdec: PLexDescriptor;
+begin
+  prev := nil;
+  cur := FileList[CurrentFile].LexList.Sub;
+  decls := nil;
+  while (cur <> nil) do begin
+    if (cur.lType = ltDeclaration) then begin
+      if (decls = nil) then begin
+        decls := cur;
+        startdec := decls;
+      end else begin
+        decls.Next := cur;
+        decls := decls.Next;
+      end;
+      if (prev = nil) then begin
+        FileList[CurrentFile].LexList.Sub := cur.Next;
+        cur := cur.Next;
+      end else begin
+        if (cur.Next = nil) then begin
+          prev.Next := nil;
+        end else begin
+//          prev.Next := cur.Next.Next;
+        end;
+        cur := cur.Next;
+      end;
+    end else begin
+      if (prev = nil) then begin
+        prev := cur;
+      end else begin
+        prev.Next := cur;
+        prev := prev.Next;
+      end;
+      cur := cur.Next;
+    end;
+  end;
+  if ((decls <> nil) and (decls.Next <> nil)) then
+    decls.Next := nil;
+  if (prev <> nil) then
+    prev.Next := startdec;
+end;
+
+//@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+procedure DoParse;
+var
+  t: TDateTime;
+  ss: string;
+begin
+  t := now;
+  while (CurrentFile < Length(FileList)) do begin
+    CurrentLine := 1;
+    CurrentPosition := 1;
+
+    new(FileList[CurrentFile].LexList);
+    FileList[CurrentFile].LexList.lType := FileList[CurrentFile].ModuleType;
+    FileList[CurrentFile].LexList.lCommand := '';
+    ss := ExtractFileName(FileList[CurrentFile].FileName);
+    SetLength(ss, length(ss)-5);
+    FileList[CurrentFile].LexList.lName := 'MAIN_'+ss;
+    FileList[CurrentFile].LexList.Next := nil;
+    FileList[CurrentFile].LexList.Params := nil;
+
+    FileList[CurrentFile].LexList.Sub := DoParseBlock;
+    FileList[CurrentFile].ParseState := ErrorState;
+
+    MoveDeclarationsToEndOfCode;
+
+    if DebugGetOptionBoolean('SaveParseTree') then
+      SaveParseTree;
+
+    inc(CurrentFile);
+  end;
+  DebugMessageSystem('Parsing time: '+ShowTime(now-t),3);
+end;
+
+procedure AddReservedName(name: string);
+begin
+  SetLength(LexResrv, length(LexResrv)+1);
+  LexResrv[length(LexResrv)-1].Name := name;
+end;
+
+//@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+procedure InitParser;
+begin
+  CurrentFile := 0;
+  FileList := nil;
+
+  AddReservedName('method');
+  AddReservedName('export');
+  AddReservedName('if');
+  AddReservedName('while');
+  AddReservedName('asm');
+  AddReservedName('include');
+  AddReservedName('return');
+end;
+
+end.

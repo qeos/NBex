@@ -1,0 +1,51 @@
+unit Debug;
+
+interface
+uses IniFiles, SysUtils, Parser;
+
+var
+  // 0 - выводить все сообщения
+  // ...
+  // 5 - не выводить ничего
+  DebugLevel: integer;
+  LangFile: TIniFile;
+
+procedure InitDebug;
+procedure DebugMessage(msg: integer; level: integer); overload;
+procedure DebugMessage(msg: integer; level, dec: integer); overload;
+procedure DebugMessageSystem(msg: string; level: integer);
+
+implementation
+
+procedure InitDebug;
+begin
+  if LangFile = nil then
+    LangFile := TIniFile.Create(ExtractFileDir(ParamStr(0))+'\language.ini');
+  DebugLevel := LangFile.ReadInteger('DebugOptions','DebugLevel',0);
+end;
+
+procedure DebugMessage(msg: integer; level: integer); overload;
+begin
+  if level >= DebugLevel then begin
+    Write  ('['+FileList[CurrentFile].FileName+']['+IntToStr(CurrentLine)+','+IntToStr(CurrentPosition-1)+'] ');
+    Writeln(LangFile.ReadString('DebugStrings','Message'+IntToHex(msg, 4),'Message'+IntToHex(msg, 4)));
+  end;
+end;
+
+procedure DebugMessage(msg: integer; level, dec: integer); overload;
+begin
+  if level >= DebugLevel then begin
+    Write  ('['+FileList[CurrentFile].FileName+']['+IntToStr(CurrentLine)+','+IntToStr(CurrentPosition)+'] ');
+    Writeln(LangFile.ReadString('DebugStrings','Message'+IntToHex(msg, 4),'Message'+IntToHex(msg, 4)));
+  end;
+end;
+
+procedure DebugMessageSystem(msg: string; level: integer);
+begin
+  if level >= DebugLevel then begin
+    Write  ('['+FileList[CurrentFile].FileName+']['+IntToStr(CurrentLine)+','+IntToStr(CurrentPosition-1)+'] ');
+    Writeln(msg);
+  end;
+end;
+
+end.
